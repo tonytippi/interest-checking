@@ -1,12 +1,12 @@
 import dotenv from 'dotenv';
 import { loadConfig } from './config';
-import { fetchEchelonRates } from './markets/echelon';
-import { fetchAriesRates } from './markets/aries';
+import { fetchEchelonPositions, fetchEchelonRates } from './markets/echelon';
+import { fetchAriesPositions, fetchAriesRates } from './markets/aries';
 import { loadState, saveState } from './state';
 import { buildStateFromRates, detectRateChanges } from './diff';
-import { buildChangeMessage, printRates } from './utils/format';
+import { buildChangeMessage, printPositions, printRates } from './utils/format';
 import { sendTelegramMessage } from './notifier/telegram';
-import { RateRecord } from './types';
+import { PositionRecord, RateRecord } from './types';
 
 dotenv.config();
 
@@ -21,12 +21,27 @@ async function fetchAllRates(): Promise<RateRecord[]> {
   return [...echelonRates, ...ariesRates];
 }
 
+async function fetchAllPositions(): Promise<PositionRecord[]> {
+  const config = loadConfig();
+  if (!config.walletAddress) return [];
+
+  const [echelonPositions, ariesPositions] = await Promise.all([
+    fetchEchelonPositions(config.walletAddress, config.tokens, config.echelonLendingModuleAddress),
+    fetchAriesPositions(config.walletAddress, config.tokens, config.ariesTokenMap),
+  ]);
+
+  return [...echelonPositions, ...ariesPositions];
+}
+
 async function runOnce(): Promise<void> {
   const config = loadConfig();
   const startAt = new Date().toISOString();
 
   console.log(`[run] start ${startAt}`);
   console.log(`[run] tokens=${config.tokens.join(',')} threshold=${config.aprChangeThreshold}`);
+  if (config.walletAddress) {
+    console.log(`[run] wallet=${config.walletAddress}`);
+  }
 
   const [records, previousState] = await Promise.all([
     fetchAllRates(),
@@ -34,6 +49,15 @@ async function runOnce(): Promise<void> {
   ]);
 
   printRates(records);
+
+  if (config.walletAddress) {
+    try {
+      const positions = await fetchAllPositions();
+      printPositions(positions);
+    } catch (error) {
+      console.error('[position] failed to fetch wallet positions:', error);
+    }
+  }
 
   const changes = detectRateChanges(records, previousState, config.aprChangeThreshold);
   const nextState = buildStateFromRates(records);

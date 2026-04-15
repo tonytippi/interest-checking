@@ -26,3 +26,11 @@ export interface RateChange {
   current: number;
   delta: number;
 }
+
+export interface PositionRecord {
+  market: MarketName;
+  token: string;
+  depositAmount: number | null;
+  borrowAmount: number | null;
+  sourceId?: string;
+}

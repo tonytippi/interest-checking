@@ -1,5 +1,5 @@
-import { getClient as getAriesApiClient, Reserves } from '@aries-markets/api';
-import { RateRecord } from '../types';
+import { getClient as getAriesApiClient, Reserves, UserProfile } from '@aries-markets/api';
+import { PositionRecord, RateRecord } from '../types';
 
 interface ReserveLike {
   coinAddress: string;
@@ -77,46 +77,7 @@ function chooseBestReserveAddress(candidates: ReserveLike[]): string | undefined
   return candidates[0]?.coinAddress;
 }
 
-function debugCandidates(tokens: string[], reserveList: ReserveLike[]): void {
-  if (process.env.ARIES_DEBUG !== 'true') return;
-
-  for (const token of tokens) {
-    const normalized = token.toUpperCase();
-    const candidates = reserveList.filter(reserve => {
-      const symbol = extractSymbolFromTypeAddress(reserve.coinAddress) ?? '';
-      return symbol === normalized || reserve.coinAddress.toUpperCase().includes(normalized);
-    });
-
-    if (candidates.length === 0) {
-      console.log(`[aries][debug] token ${normalized}: no candidates`);
-      continue;
-    }
-
-    console.log(`[aries][debug] token ${normalized}: ${candidates.length} candidates`);
-    for (const reserve of candidates) {
-      const util = calcUtilizationUiLike(reserve);
-      const borrow = calcBorrowAprUiLike(reserve);
-      const supply = calcSupplyAprUiLike(reserve, borrow);
-      console.log(
-        `[aries][debug] ${reserve.coinAddress} supply=${(supply * 100).toFixed(2)}% borrow=${(borrow * 100).toFixed(2)}% util=${(util * 100).toFixed(2)}% reserveRatio=${reserve.reserveRatio.toFixed(2)}%`
-      );
-    }
-  }
-}
-
-export async function fetchAriesRates(
-  tokens: string[],
-  _rpcUrl: string,
-  tokenMap: Record<string, string>
-): Promise<RateRecord[]> {
-  const api = getAriesApiClient('https://api-v2.ariesmarkets.xyz');
-
-  const reserves = await api.reserve.current.query();
-  const reserveList = toReserveList(reserves);
-  const reserveByAddress = new Map(reserveList.map(reserve => [normalizeAddress(reserve.coinAddress), reserve]));
-
-  debugCandidates(tokens, reserveList);
-
+function buildSymbolToAddress(tokens: string[], tokenMap: Record<string, string>, reserveList: ReserveLike[]): Map<string, string> {
   const candidatesBySymbol = new Map<string, ReserveLike[]>();
   for (const reserve of reserveList) {
     const parsed = extractSymbolFromTypeAddress(reserve.coinAddress);
@@ -149,6 +110,74 @@ export async function fetchAriesRates(
     }
   }
 
+  return symbolToAddress;
+}
+
+function debugCandidates(tokens: string[], reserveList: ReserveLike[]): void {
+  if (process.env.ARIES_DEBUG !== 'true') return;
+
+  for (const token of tokens) {
+    const normalized = token.toUpperCase();
+    const candidates = reserveList.filter(reserve => {
+      const symbol = extractSymbolFromTypeAddress(reserve.coinAddress) ?? '';
+      return symbol === normalized || reserve.coinAddress.toUpperCase().includes(normalized);
+    });
+
+    if (candidates.length === 0) {
+      console.log(`[aries][debug] token ${normalized}: no candidates`);
+      continue;
+    }
+
+    console.log(`[aries][debug] token ${normalized}: ${candidates.length} candidates`);
+    for (const reserve of candidates) {
+      const util = calcUtilizationUiLike(reserve);
+      const borrow = calcBorrowAprUiLike(reserve);
+      const supply = calcSupplyAprUiLike(reserve, borrow);
+      console.log(
+        `[aries][debug] ${reserve.coinAddress} supply=${(supply * 100).toFixed(2)}% borrow=${(borrow * 100).toFixed(2)}% util=${(util * 100).toFixed(2)}% reserveRatio=${reserve.reserveRatio.toFixed(2)}%`
+      );
+    }
+  }
+}
+
+function sumPrincipalAcrossProfiles(profile: UserProfile, reserveAddress: string): { deposit: number; borrow: number } {
+  const key = normalizeAddress(reserveAddress);
+  let deposit = 0;
+  let borrow = 0;
+
+  for (const aggregated of Object.values(profile.profiles ?? {})) {
+    const deposits = aggregated.deposits ?? {};
+    const borrows = aggregated.borrows ?? {};
+
+    for (const [coinAddress, value] of Object.entries(deposits)) {
+      if (normalizeAddress(coinAddress) !== key) continue;
+      deposit += Number(value?.collateral_coins ?? 0);
+    }
+
+    for (const [coinAddress, value] of Object.entries(borrows)) {
+      if (normalizeAddress(coinAddress) !== key) continue;
+      borrow += Number(value?.borrowed_coins ?? 0);
+    }
+  }
+
+  return { deposit, borrow };
+}
+
+export async function fetchAriesRates(
+  tokens: string[],
+  _rpcUrl: string,
+  tokenMap: Record<string, string>
+): Promise<RateRecord[]> {
+  const api = getAriesApiClient('https://api-v2.ariesmarkets.xyz');
+
+  const reserves = await api.reserve.current.query();
+  const reserveList = toReserveList(reserves);
+  const reserveByAddress = new Map(reserveList.map(reserve => [normalizeAddress(reserve.coinAddress), reserve]));
+
+  debugCandidates(tokens, reserveList);
+
+  const symbolToAddress = buildSymbolToAddress(tokens, tokenMap, reserveList);
+
   return tokens.map(token => {
     const normalizedToken = token.toUpperCase();
     const coinAddress = symbolToAddress.get(normalizedToken);
@@ -180,6 +209,54 @@ export async function fetchAriesRates(
       token: normalizedToken,
       supplyApr,
       borrowApr,
+      sourceId: coinAddress,
+    };
+  });
+}
+
+export async function fetchAriesPositions(
+  walletAddress: string,
+  tokens: string[],
+  tokenMap: Record<string, string>
+): Promise<PositionRecord[]> {
+  const api = getAriesApiClient('https://api-v2.ariesmarkets.xyz');
+  const [reserves, userProfile, coinInfo] = await Promise.all([
+    api.reserve.current.query(),
+    api.profile.find.query({ owner: walletAddress }),
+    api.coinInfo.currentInfo.query(),
+  ]);
+
+  const reserveList = toReserveList(reserves);
+  const symbolToAddress = buildSymbolToAddress(tokens, tokenMap, reserveList);
+  const decimalsByAddress = new Map<string, number>(
+    Object.entries(coinInfo ?? {}).map(([address, info]) => [
+      normalizeAddress(address),
+      Number(info?.decimal ?? 0),
+    ])
+  );
+
+  return tokens.map(token => {
+    const normalizedToken = token.toUpperCase();
+    const coinAddress = symbolToAddress.get(normalizedToken);
+
+    if (!coinAddress) {
+      return {
+        market: 'aries',
+        token: normalizedToken,
+        depositAmount: null,
+        borrowAmount: null,
+      };
+    }
+
+    const principal = sumPrincipalAcrossProfiles(userProfile, coinAddress);
+    const decimals = decimalsByAddress.get(normalizeAddress(coinAddress)) ?? 0;
+    const scale = 10 ** Math.max(0, decimals);
+
+    return {
+      market: 'aries',
+      token: normalizedToken,
+      depositAmount: principal.deposit / scale,
+      borrowAmount: principal.borrow / scale,
       sourceId: coinAddress,
     };
   });

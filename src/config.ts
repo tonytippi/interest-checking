@@ -10,6 +10,8 @@ export interface AppConfig {
   runOnce: boolean;
   ariesRpcUrl: string;
   ariesTokenMap: Record<string, string>;
+  walletAddress?: string;
+  echelonLendingModuleAddress: string;
 }
 
 function parsePositiveNumber(input: string | undefined, fallback: number): number {
@@ -61,5 +63,9 @@ export function loadConfig(): AppConfig {
     runOnce: parseBoolean(process.env.RUN_ONCE, false),
     ariesRpcUrl: process.env.ARIES_RPC_URL ?? 'https://fullnode.mainnet.aptoslabs.com/v1',
     ariesTokenMap: parseAriesTokenMap(process.env.ARIES_TOKEN_MAP),
+    walletAddress: process.env.WALLET_ADDRESS?.trim(),
+    echelonLendingModuleAddress:
+      process.env.ECHELON_LENDING_MODULE_ADDRESS ??
+      '0xc6bc659f1649553c1a3fa05d9727433dc03843baac29473c817d06d39e7621ba',
   };
 }
