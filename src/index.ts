@@ -3,8 +3,10 @@ import { loadConfig } from './config';
 import { fetchEchelonPositions, fetchEchelonRates } from './markets/echelon';
 import { fetchAriesPositions, fetchAriesRates } from './markets/aries';
 import { loadState, saveState } from './state';
+import { loadCarryState, saveCarryState } from './carry-state';
 import { buildStateFromRates, detectRateChanges } from './diff';
-import { buildChangeMessage, printPositions, printRates } from './utils/format';
+import { buildCarryAlertMessage, buildCarryReport, buildCarryStateFromPositions } from './carry';
+import { buildChangeMessage, printCarryReport, printPositions, printRates } from './utils/format';
 import { sendTelegramMessage } from './notifier/telegram';
 import { PositionRecord, RateRecord } from './types';
 
@@ -52,8 +54,37 @@ async function runOnce(): Promise<void> {
 
   if (config.walletAddress) {
     try {
-      const positions = await fetchAllPositions();
+      const [positions, previousCarryState] = await Promise.all([
+        fetchAllPositions(),
+        loadCarryState(config.carryStateFilePath),
+      ]);
+
       printPositions(positions);
+
+      const carryReport = buildCarryReport(positions, previousCarryState, startAt);
+      printCarryReport(carryReport);
+
+      const nextCarryState = buildCarryStateFromPositions(positions, startAt, previousCarryState);
+      await saveCarryState(config.carryStateFilePath, nextCarryState);
+
+      const carryAlert = buildCarryAlertMessage(carryReport, config.carryDriftThresholdPerHour, startAt);
+      if (carryAlert) {
+        if (!config.telegramBotToken || !config.telegramChatId) {
+          console.log('[notify] carry drift alert triggered but TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID missing');
+          console.log(carryAlert);
+        } else {
+          try {
+            await sendTelegramMessage(config.telegramBotToken, config.telegramChatId, carryAlert, {
+              timeoutMs: 15000,
+              retries: 2,
+              retryDelayMs: 2000,
+            });
+            console.log('[notify] carry drift alert sent');
+          } catch (error) {
+            console.error('[notify] carry drift alert failed, keeping run successful:', error);
+          }
+        }
+      }
     } catch (error) {
       console.error('[position] failed to fetch wallet positions:', error);
     }

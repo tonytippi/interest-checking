@@ -18,6 +18,48 @@ export interface StateSnapshot {
   rates: Record<string, StoredRate>;
 }
 
+export interface CarryTokenSnapshot {
+  ariesDeposit: number | null;
+  echelonDeposit: number | null;
+  echelonBorrow: number | null;
+  netCarry: number | null;
+}
+
+export interface CarryHistoryPoint {
+  at: string;
+  netCarry: number;
+  ariesDeposit: number | null;
+  echelonDeposit: number | null;
+  echelonBorrow: number | null;
+}
+
+export interface CarryTokenState extends CarryTokenSnapshot {
+  history: CarryHistoryPoint[];
+}
+
+export interface CarryStateSnapshot {
+  updatedAt: string;
+  tokens: Record<string, CarryTokenState>;
+}
+
+export interface CarryTokenReport {
+  token: string;
+  ariesDeposit: number | null;
+  echelonDeposit: number | null;
+  echelonBorrow: number | null;
+  netCarry: number | null;
+  netCarryDelta: number | null;
+  elapsedHours: number | null;
+  hourlyDrift: number | null;
+  rolling24hDrift: number | null;
+  ariesRealApr: number | null;
+  echelonRealApr: number | null;
+  echelonDepositProfitDelta: number | null;
+  echelonDepositProfitPerHour: number | null;
+  echelonDepositProfit24hPerHour: number | null;
+  echelonDepositRealApr: number | null;
+}
+
 export interface RateChange {
   market: MarketName;
   token: string;

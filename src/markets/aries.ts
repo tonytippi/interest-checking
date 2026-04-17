@@ -140,6 +140,35 @@ function debugCandidates(tokens: string[], reserveList: ReserveLike[]): void {
   }
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function queryWithRetry<T>(label: string, operation: () => Promise<T>, maxAttempts = 3): Promise<T> {
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      const isHtmlResponse = message.includes("Unexpected token '<'");
+      const isLastAttempt = attempt === maxAttempts;
+
+      if (isLastAttempt || !isHtmlResponse) {
+        throw error;
+      }
+
+      const backoffMs = 700 * attempt;
+      console.warn(`[aries] ${label} failed with non-JSON response, retry ${attempt + 1}/${maxAttempts} in ${backoffMs}ms`);
+      await sleep(backoffMs);
+    }
+  }
+
+  throw lastError;
+}
+
 function sumPrincipalAcrossProfiles(profile: UserProfile, reserveAddress: string): { deposit: number; borrow: number } {
   const key = normalizeAddress(reserveAddress);
   let deposit = 0;
@@ -220,11 +249,13 @@ export async function fetchAriesPositions(
   tokenMap: Record<string, string>
 ): Promise<PositionRecord[]> {
   const api = getAriesApiClient('https://api-v2.ariesmarkets.xyz');
-  const [reserves, userProfile, coinInfo] = await Promise.all([
-    api.reserve.current.query(),
-    api.profile.find.query({ owner: walletAddress }),
-    api.coinInfo.currentInfo.query(),
-  ]);
+  const [reserves, userProfile, coinInfo] = await queryWithRetry('positions', () =>
+    Promise.all([
+      api.reserve.current.query(),
+      api.profile.find.query({ owner: walletAddress }),
+      api.coinInfo.currentInfo.query(),
+    ])
+  );
 
   const reserveList = toReserveList(reserves);
   const symbolToAddress = buildSymbolToAddress(tokens, tokenMap, reserveList);

@@ -7,11 +7,19 @@ export interface AppConfig {
   telegramBotToken?: string;
   telegramChatId?: string;
   stateFilePath: string;
+  carryStateFilePath: string;
+  carryDriftThresholdPerHour: number;
   runOnce: boolean;
   ariesRpcUrl: string;
   ariesTokenMap: Record<string, string>;
   walletAddress?: string;
   echelonLendingModuleAddress: string;
+}
+
+function parseNumber(input: string | undefined, fallback: number): number {
+  if (!input) return fallback;
+  const value = Number(input);
+  return Number.isFinite(value) ? value : fallback;
 }
 
 function parsePositiveNumber(input: string | undefined, fallback: number): number {
@@ -60,6 +68,8 @@ export function loadConfig(): AppConfig {
     telegramBotToken: process.env.TELEGRAM_BOT_TOKEN,
     telegramChatId: process.env.TELEGRAM_CHAT_ID,
     stateFilePath: path.resolve(process.env.STATE_FILE_PATH ?? '.interest-state.json'),
+    carryStateFilePath: path.resolve(process.env.CARRY_STATE_FILE_PATH ?? '.carry-state.json'),
+    carryDriftThresholdPerHour: Math.abs(parseNumber(process.env.CARRY_DRIFT_THRESHOLD_PER_HOUR, 0)),
     runOnce: parseBoolean(process.env.RUN_ONCE, false),
     ariesRpcUrl: process.env.ARIES_RPC_URL ?? 'https://fullnode.mainnet.aptoslabs.com/v1',
     ariesTokenMap: parseAriesTokenMap(process.env.ARIES_TOKEN_MAP),

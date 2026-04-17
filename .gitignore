@@ -3,3 +3,4 @@ node_modules
 dist
 coverage
 .interest-state.json
+.carry-state.json
